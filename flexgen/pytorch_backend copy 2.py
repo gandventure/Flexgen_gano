@@ -449,7 +449,7 @@ class TorchDevice:
                     q = q.float().cpu()
                     value = self._sparse_attention_value(q, k, v_new, v_cache,
                         attention_mask.data, b, src_s, tgt_s, n_head, head_dim,
-                        attn_sparsity).cuda().half()
+                        attn_sparsity).half()
         else:  # Mixed device attention
             assert attn_sparsity >= 1.0
             value = self._mixed_device_attention(q, k_cache, v_cache,
@@ -558,7 +558,7 @@ class TorchDevice:
         # shape: (b * n_head, s, head_dim)
         v_gpu = v_gpu.permute(1, 0, 2)
 
-        mask_gpu = mask[:b_gpu].cuda()
+        mask_gpu = mask[:b_gpu]
         value_gpu = self._attention_value(q_gpu, k_gpu, v_gpu, mask_gpu,
             b_gpu, src_s, tgt_s, n_head, head_dim)
 
@@ -579,7 +579,7 @@ class TorchDevice:
         value_cpu = self._attention_value(q_cpu, k_cpu, v_cpu, mask_cpu,
             b_cpu, src_s, tgt_s, n_head, head_dim)
 
-        value = torch.cat([value_gpu, value_cpu.cuda().half()], dim=0)
+        value = torch.cat([value_gpu, value_cpu.half()], dim=0)
         return value
 
     def mlp(self, inputs, wi, bi, wo, bo, w_ln, b_ln, donate):
@@ -600,13 +600,11 @@ class TorchDevice:
         return TorchTensor.create_from_torch(out, self)
 
     def synchronize(self):
-        torch.cuda.synchronize()
+        pass
+        #torch.cuda.synchronize()
 
     def mem_stats(self):
-        if self.device_type == DeviceType.CUDA:
-            cur_mem = torch.cuda.memory_allocated(self.dev)
-            peak_mem = torch.cuda.max_memory_allocated(self.dev)
-        elif self.device_type == DeviceType.CPU:
+        if self.device_type == DeviceType.CPU:
             cur_mem = cpu_mem_stats()
             peak_mem = 0
         else:
@@ -615,7 +613,7 @@ class TorchDevice:
         return cur_mem, peak_mem
 
     def print_stats(self, output_file=None):
-        torch.cuda.synchronize()
+        #torch.cuda.synchronize()
         cur_mem, peak_mem = self.mem_stats()
 
         if output_file is not None:
@@ -637,7 +635,7 @@ class TorchDevice:
 class TorchDisk:
     """Manage tensors stored on a disk."""
 
-    def __init__(self, path, mem_capacity=None, cuda_id=0, num_copy_threads=4):
+    def __init__(self, path, mem_capacity=None, num_copy_threads=4):
         self.name = path
         self.path = os.path.abspath(os.path.expanduser(path))
         self.mem_capacity = mem_capacity
@@ -654,13 +652,13 @@ class TorchDisk:
 
         # Copy threads
         self.copy_queue = queue.Queue()
-        self.copy_threads = [
-            threading.Thread(
-                target=copy_worker_func, args=(self.copy_queue, cuda_id)
-            ) for _ in range(num_copy_threads)
-        ]
-        for t in self.copy_threads:
-            t.start()
+        # self.copy_threads = [
+        #     threading.Thread(
+        #         target=copy_worker_func, args=(self.copy_queue)
+        #     ) for _ in range(num_copy_threads)
+        # ]
+        # for t in self.copy_threads:
+        #     t.start()
 
         global global_disk_device
         global_disk_device = self
@@ -850,20 +848,20 @@ def general_copy(dst: TorchTensor, dst_indices: Tuple[slice],
     elif dst.device.device_type == DeviceType.DISK:
         # The tensor is on the disk, dispatch to copy threads for asynchronous copy
         dst.device.submit_copy(dst, dst_indices, src, src_indices)
-    elif (src.device.device_type == DeviceType.CUDA and
-          dst.device.device_type == DeviceType.CPU and
-          not dst.data.is_pinned() and src.shape[0] > 1):
-        # The cpu tensor is not pinned, dispatch to copy threads and use pin_memory
-        # as a relay
-        global_disk_device.submit_copy(dst, dst_indices, src, src_indices)
-    elif (src.device.device_type == DeviceType.CPU and
-          dst.device.device_type == DeviceType.CUDA and
-          not src.data.is_pinned()):
-        # The cpu tensor is not pinned, use pin_memory as a relay
-        src = src.data[src_indices] if src_indices else src.data
-        dst = dst.data[dst_indices] if dst_indices else dst.data
-        src = src.pin_memory()
-        dst.copy_(src, non_blocking=True)
+    # elif (src.device.device_type == DeviceType.CUDA and
+    #       dst.device.device_type == DeviceType.CPU and
+    #       not dst.data.is_pinned() and src.shape[0] > 1):
+    #     # The cpu tensor is not pinned, dispatch to copy threads and use pin_memory
+    #     # as a relay
+    #     global_disk_device.submit_copy(dst, dst_indices, src, src_indices)
+    # elif (src.device.device_type == DeviceType.CPU and
+    #       dst.device.device_type == DeviceType.CUDA and
+    #       not src.data.is_pinned()):
+    #     # The cpu tensor is not pinned, use pin_memory as a relay
+    #     src = src.data[src_indices] if src_indices else src.data
+    #     dst = dst.data[dst_indices] if dst_indices else dst.data
+    #     src = src.pin_memory()
+    #     dst.copy_(src, non_blocking=True)
     else:
         # The normal path
         src = src.data[src_indices] if src_indices else src.data
@@ -891,32 +889,32 @@ def map_to_torch_tensor(tensor, indices):
     return data[indices] if indices else data
 
 
-def copy_worker_func(queue, cuda_id):
-    """The copy worker thread."""
-    torch.cuda.set_device(cuda_id)
+# def copy_worker_func(queue, cuda_id):
+#     """The copy worker thread."""
+#     torch.cuda.set_device(cuda_id)
 
-    cpu_buf = torch.empty((1 * GB,), dtype=torch.float16, pin_memory=True)
-    copy_stream = torch.cuda.Stream()
+#     cpu_buf = torch.empty((1 * GB,), dtype=torch.float16, pin_memory=True)
+#     copy_stream = torch.cuda.Stream()
 
-    with torch.cuda.stream(copy_stream):
-        while True:
-            item = queue.get()
-            if item is None:
-                queue.task_done()
-                return
+#     with torch.cuda.stream(copy_stream):
+#         while True:
+#             item = queue.get()
+#             if item is None:
+#                 queue.task_done()
+#                 return
 
-            dst, dst_indices, src, src_indices = item
-            src_data = map_to_torch_tensor(src, src_indices)
-            dst_data = map_to_torch_tensor(dst, dst_indices)
+#             dst, dst_indices, src, src_indices = item
+#             src_data = map_to_torch_tensor(src, src_indices)
+#             dst_data = map_to_torch_tensor(dst, dst_indices)
 
-            if (src.device.device_type == DeviceType.CUDA or
-                dst.device.device_type == DeviceType.CUDA):
-                # Use a pinned cpu buffer as a relay
-                size = np.prod(src_data.shape)
-                tmp_cpu_buf = cpu_buf[:size].view(src_data.shape)
-                tmp_cpu_buf.copy_(src_data)
-                dst_data.copy_(tmp_cpu_buf)
-            else:
-                dst_data.copy_(src_data)
+#             if (src.device.device_type == DeviceType.CUDA or
+#                 dst.device.device_type == DeviceType.CUDA):
+#                 # Use a pinned cpu buffer as a relay
+#                 size = np.prod(src_data.shape)
+#                 tmp_cpu_buf = cpu_buf[:size].view(src_data.shape)
+#                 tmp_cpu_buf.copy_(src_data)
+#                 dst_data.copy_(tmp_cpu_buf)
+#             else:
+#                 dst_data.copy_(src_data)
 
-            queue.task_done()
+#             queue.task_done()

@@ -91,7 +91,7 @@ def get_choice(cur_percent, percents, choices):
 
 def init_weight_list(weight_specs, policy, env):
     dev_percents = [policy.w_disk_percent, policy.w_cpu_percent, policy.w_gpu_percent]
-    dev_choices = [env.disk, env.cpu, env.gpu]
+    dev_choices = [env.disk, env.cpu]
 
     sizes = [np.prod(spec[0]) for spec in weight_specs]
     sizes_cumsum = np.cumsum(sizes)
@@ -136,7 +136,7 @@ class InputEmbed:
         self.config = config
         self.env = env
         self.policy = policy
-        self.compute = self.env.gpu
+        self.compute = self.env.cpu
         self.weight_load_dst = (self.compute.compressed_device if policy.compress_weight
             else self.compute)
 
@@ -200,7 +200,7 @@ class OutputEmbed:
         self.config = config
         self.env = env
         self.policy = policy
-        self.compute = self.env.gpu
+        self.compute = self.env.cpu
         self.weight_load_dst = (self.compute.compressed_device if policy.compress_weight
             else self.compute)
 
@@ -267,11 +267,10 @@ class SelfAttention:
         self.env = env
         self.layer_id = layer_id
         self.policy = policy
-        self.compute = self.env.gpu
+        self.compute = self.env.cpu
         self.weight_load_dst = (self.compute.compressed_device if policy.compress_weight
             else self.compute)
-        self.attention_compute = (self.env.cpu if self.policy.cpu_cache_compute
-            else self.env.gpu)
+        self.attention_compute = self.env.cpu
 
         self.task = None
 
@@ -320,7 +319,7 @@ class SelfAttention:
 
     def init_cache_one_gpu_batch(self, cache_home):
         if self.policy.cache_gpu_percent == 100:
-            device = self.env.gpu
+            device = self.env.cpu
         elif self.policy.cache_cpu_percent == 100:
             device = self.env.cpu
         elif self.policy.cache_disk_percent == 100:
@@ -465,7 +464,7 @@ class MLP:
         self.env = env
         self.layer_id = layer_id
         self.policy = policy
-        self.compute = self.env.gpu
+        self.compute = self.env.cpu
         self.weight_load_dst = (self.compute.compressed_device if policy.compress_weight
             else self.compute)
 
@@ -606,7 +605,7 @@ class OptLM:
         self.num_layers = len(layers)
 
         if self.policy.act_gpu_percent == 100:
-            self.act_home = self.env.gpu
+            self.act_home = self.env.cpu
         elif self.policy.act_cpu_percent == 100:
             self.act_home = self.env.cpu
         elif self.policy.act_disk_percent == 100:
@@ -615,9 +614,9 @@ class OptLM:
             raise NotImplementedError()
 
         # CUDA streams
-        self.load_weight_stream = torch.cuda.Stream()
-        self.load_cache_stream = torch.cuda.Stream()
-        self.store_cache_stream = torch.cuda.Stream()
+        #self.load_weight_stream = torch.cuda.Stream()
+        #self.load_cache_stream = torch.cuda.Stream()
+        #self.store_cache_stream = torch.cuda.Stream()
 
         # Intermediate tensors
         # The following buffers store values used
@@ -659,11 +658,12 @@ class OptLM:
                 return
 
         # Load from weight_home to weight_read_buf
-        if overlap:
-            with torch.cuda.stream(self.load_weight_stream):
-                self.layers[j].load_weight(self.weight_home[j], self.weight_read_buf[j], k)
-        else:
-            self.layers[j].load_weight(self.weight_home[j], self.weight_read_buf[j], k)
+        # if overlap:
+        #     with torch.cuda.stream(self.load_weight_stream):
+        #         self.layers[j].load_weight(self.weight_home[j], self.weight_read_buf[j], k)
+        # else:
+        #     self.layers[j].load_weight(self.weight_home[j], self.weight_read_buf[j], k)
+        self.layers[j].load_weight(self.weight_home[j], self.weight_read_buf[j], k)
 
     def delete_weight(self, j, k):
         if k == 0:
@@ -691,11 +691,12 @@ class OptLM:
                 return
 
         # Load from cache_home to cache_read_buf
-        if overlap:
-            with torch.cuda.stream(self.load_cache_stream):
-                self.layers[j].load_cache(self.cache_home[j][k], self.cache_read_buf[j][k], i)
-        else:
-            self.layers[j].load_cache(self.cache_home[j][k], self.cache_read_buf[j][k], i)
+        # if overlap:
+        #     with torch.cuda.stream(self.load_cache_stream):
+        #         self.layers[j].load_cache(self.cache_home[j][k], self.cache_read_buf[j][k], i)
+        # else:
+        #     self.layers[j].load_cache(self.cache_home[j][k], self.cache_read_buf[j][k], i)
+        self.layers[j].load_cache(self.cache_home[j][k], self.cache_read_buf[j][k], i)
 
     def store_cache(self, i, j, k, overlap=True):
         # Handle corner cases
@@ -713,11 +714,13 @@ class OptLM:
 
         # Store cache_write_buf to cache_home
         # Delete cache_write_buf
-        if overlap:
-            with torch.cuda.stream(self.store_cache_stream):
-                self.layers[j].store_cache(self.cache_home[j][k], self.cache_write_buf[j][k], i)
-        else:
-            self.layers[j].store_cache(self.cache_home[j][k], self.cache_write_buf[j][k], i)
+        # if overlap:
+        #     with torch.cuda.stream(self.store_cache_stream):
+        #         self.layers[j].store_cache(self.cache_home[j][k], self.cache_write_buf[j][k], i)
+        # else:
+        #     self.layers[j].store_cache(self.cache_home[j][k], self.cache_write_buf[j][k], i)
+        self.layers[j].store_cache(self.cache_home[j][k], self.cache_write_buf[j][k], i)
+        
 
     def delete_cache(self, j, k):
         v = self.cache_home[j][k].pop()
@@ -792,7 +795,7 @@ class OptLM:
 
     def sync(self):
         self.env.disk.synchronize()
-        torch.cuda.synchronize()
+        #torch.cuda.synchronize()
 
     def init_all_weights(self):
         self.weight_home = array_1d(self.num_layers, ValueHolder)
@@ -815,8 +818,7 @@ class OptLM:
         right = left + gpu_batch_size
         input_ids = self.output_ids[left:right, :self.task.prompt_len]
 
-        attention_compute = (self.env.cpu if self.policy.cpu_cache_compute
-            else self.env.gpu)
+        attention_compute = self.env.cpu
         val = attention_compute.allocate(
             (self.policy.gpu_batch_size, self.task.prompt_len), bool)
         val.load_from_np((input_ids != self.config.pad_token_id))
@@ -1178,6 +1180,7 @@ def get_test_inputs(prompt_len, num_prompts, tokenizer):
 
 def run_flexgen(args):
     print(f"<run_flexgen>: args.model: {args.model}")
+    #print(f"Model parameters dtype: {next(args.model.parameters()).dtype}")
     if args.model == "facebook/galactica-30b":
         tokenizer = AutoTokenizer.from_pretrained("facebook/galactica-30b", padding_side="left")
     else:
@@ -1189,10 +1192,10 @@ def run_flexgen(args):
     warmup_inputs = get_test_inputs(32, num_prompts, tokenizer)
     inputs = get_test_inputs(prompt_len, num_prompts, tokenizer)
 
-    gpu = TorchDevice("cuda:0")
+    #gpu = TorchDevice("cuda:0")
     cpu = TorchDevice("cpu")
     disk = TorchDisk(args.offload_dir)
-    env = ExecutionEnv(gpu=gpu, cpu=cpu, disk=disk, mixed=TorchMixedDevice([gpu, cpu, disk]))
+    env = ExecutionEnv(cpu=cpu, disk=disk, mixed=TorchMixedDevice([cpu, disk]))
 
     policy = Policy(args.gpu_batch_size, args.num_gpu_batches,
                     args.percent[0], args.percent[1],
@@ -1243,7 +1246,7 @@ def run_flexgen(args):
     num_generated_tokens = num_prompts * gen_len
     total_latency = prefill_latency + decode_latency
     total_throughput = num_generated_tokens / total_latency
-    _, gpu_peak_mem = gpu.mem_stats()
+    #_, gpu_peak_mem = gpu.mem_stats()
     _, cpu_peak_mem = cpu.mem_stats()
 
     if DUMMY_WEIGHT not in args.path:
@@ -1255,7 +1258,7 @@ def run_flexgen(args):
         if args.verbose >= 2:
             print(show_str)
 
-    gpu.print_stats()
+    #gpu.print_stats()
     cpu.print_stats()
     projected = bool(args.debug_mode or cut_gen_len)
 
@@ -1266,7 +1269,7 @@ def run_flexgen(args):
 
     log_str = write_benchmark_log(filename,
         opt_config.model_bytes(), cache_size, hidden_size,
-        gpu_peak_mem, projected, prefill_latency, prefill_throughput,
+        cpu_peak_mem, projected, prefill_latency, prefill_throughput,
         decode_latency, decode_throughput, total_latency, total_throughput)
     if args.verbose >= 1:
         print(log_str)

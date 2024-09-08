@@ -34,7 +34,7 @@ class Task:
 @dataclasses.dataclass(frozen=True)
 class ExecutionEnv:
     """Hardware environment."""
-    gpu: Any = None
+    #gpu: Any = None
     cpu: Any = None
     disk: Any = None
     mixed: Any = None
@@ -43,10 +43,10 @@ class ExecutionEnv:
     def create(cls, offload_dir):
         # fix recursive import
         from flexgen.pytorch_backend import TorchDevice, TorchDisk, TorchMixedDevice
-        gpu = TorchDevice("cuda:0")
+        #gpu = TorchDevice("cuda:0")
         cpu = TorchDevice("cpu")
         disk = TorchDisk(offload_dir)
-        return cls(gpu=gpu, cpu=cpu, disk=disk, mixed=TorchMixedDevice([gpu, cpu, disk]))
+        return cls(cpu=cpu, disk=disk, mixed=TorchMixedDevice([ cpu, disk]))
 
     def close_copy_threads(self):
         self.disk.close_copy_threads()
@@ -66,19 +66,19 @@ class BenchmarkResult:
 np_dtype_to_torch_dtype = {
     np.float16: torch.float16, np.float32: torch.float32, np.uint8: torch.uint8,
     np.int8: torch.int8, np.int32: torch.int32, np.int64: torch.int64,
-    bool: torch.bool,
+    bool: torch.bool
 }
 
 torch_dtype_to_np_dtype = {
     torch.float16: np.float16, torch.float32: np.float32,
     torch.uint8: np.uint8, torch.int8: np.int8, torch.int32: np.int32,
-    torch.int64: np.int64, torch.bool: bool,
+    torch.int64: np.int64, torch.bool: bool
 }
 
 torch_dtype_to_num_bytes = {
     torch.float16: 2, torch.float32: 4,
     torch.int8: 1, torch.uint8: 1, torch.int32: 4, torch.int64: 8,
-    torch.bool: 1,
+    torch.bool: 1
 }
 
 
